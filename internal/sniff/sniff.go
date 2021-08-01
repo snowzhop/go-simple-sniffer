@@ -1,10 +1,13 @@
 package sniff
 
 import (
+	"context"
 	"fmt"
+	"os"
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
+	"github.com/google/gopacket/pcapgo"
 )
 
 func init() {
@@ -13,12 +16,12 @@ func init() {
 	}
 }
 
-func (s *Sniffer) CapturePackets() {
+func (s *Sniffer) CapturePackets(ctx context.Context) {
 	source := gopacket.NewPacketSource(s.Handle, s.Handle.LinkType())
 
 	for packet := range source.Packets() {
 		select {
-		case <-s.AbortChan:
+		case <-ctx.Done():
 			return
 		default:
 		}
@@ -48,6 +51,32 @@ func (s *Sniffer) processPacket(packet *gopacket.Packet) {
 		}
 	}
 	fmt.Println(packetDelimeter)
+}
+
+func (s *Sniffer) WritePacketsToFile(ctx context.Context, filepath string, snaplen uint32) error {
+	f, err := os.Create(filepath)
+	if err != nil {
+		return err
+	}
+
+	writer := pcapgo.NewWriter(f)
+	writer.WriteFileHeader(snaplen, s.Handle.LinkType())
+
+	source := gopacket.NewPacketSource(s.Handle, s.Handle.LinkType())
+
+	for packet := range source.Packets() {
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+		}
+		s.processPacket(&packet)
+		writer.WritePacket(packet.Metadata().CaptureInfo, packet.Data())
+
+		s.packetCounter++
+	}
+
+	return nil
 }
 
 func (s *Sniffer) PacketCount() uint64 {
